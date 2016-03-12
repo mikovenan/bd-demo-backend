@@ -1,1 +1,1 @@
-web: java $JAVA_OPTS -cp target/classes:target/dependency/* Application
+web: java -Dserver.port=31337 -jar  target/bd-demo-0.0.1.jar
