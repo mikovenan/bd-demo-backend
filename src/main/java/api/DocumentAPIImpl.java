@@ -1,9 +1,6 @@
 package api;
 
-import models.DocumentModel;
-import models.ExchangeDocumentUsageModel;
-import models.InboundDocumentUsageModel;
-import models.InboundUserModel;
+import models.*;
 import org.apache.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -13,6 +10,7 @@ import repositories.DocumentModelRepository;
 import repositories.DocumentUsageModelRepository;
 import repositories.UserRepository;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -32,22 +30,55 @@ public class DocumentAPIImpl implements DocumentAPI {
 
     @Override
     @RequestMapping(value = "/create", method = RequestMethod.POST)
-    public ResponseEntity<String> createDocument(@RequestBody DocumentModel documentModel,
-                                                 @RequestHeader("Authorization") String auth) {
-        if (!documentModel.isValid())
+    public ResponseEntity<ExchangeDocumentModel> createDocument(@RequestBody ExchangeDocumentModel exchangeDocumentModel,
+                                                                @RequestHeader("Authorization") String auth) {
+        if (!exchangeDocumentModel.isValid())
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
 
         InboundUserModel userModel = userRepository.getUserFromToken(auth);
         if (userModel == null)
             return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
 
-        logger.info("User: " + userModel.getId() + " creating document: " + documentModel.toString());
+        InboundDocumentModel inboundDocumentModel = new InboundDocumentModel();
+        inboundDocumentModel.setUrl(exchangeDocumentModel.getUrl());
+        inboundDocumentModel.SetOwnerId(userModel.getId());
 
-        documentModel.SetOwnerId(userModel.getId());
+        documentModelRepository.save(inboundDocumentModel);
 
-        documentModel = documentModelRepository.save(documentModel);
+        exchangeDocumentModel.setOwnerEmail(userModel.getEmail());
+        exchangeDocumentModel.setId(inboundDocumentModel.getId());
 
-        return new ResponseEntity<>(documentModel.getId(), HttpStatus.OK);
+        logger.info("User: " + userModel.getId() + " creating document: " + exchangeDocumentModel.toString());
+
+        return new ResponseEntity<>(exchangeDocumentModel, HttpStatus.OK);
+    }
+
+    @Override
+    @RequestMapping(value = "/{doc_id}/preview", method = RequestMethod.GET)
+    public ResponseEntity<ExchangeDocumentModel> getDocument(@PathVariable(value="doc_id") String id,
+                                                            @RequestHeader("Authorization") String auth) {
+        InboundUserModel userModel = userRepository.getUserFromToken(auth);
+        if (userModel == null)
+            return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
+
+        InboundDocumentModel inboundDocumentModel = documentModelRepository.findOne(id);
+
+        if (inboundDocumentModel == null) {
+            logger.info("User: " + userModel.getId() + " tried to fetch invalid doc id: " + id);
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+
+        InboundUserModel docOwner = userRepository.findOne(inboundDocumentModel.getOwnerId());
+
+        logger.info("User: " + userModel.getId() + " fetching document: " + inboundDocumentModel.toString());
+
+        ExchangeDocumentModel exchangeDocumentModel = new ExchangeDocumentModel();
+        exchangeDocumentModel.setUrl(inboundDocumentModel.getUrl());
+        exchangeDocumentModel.setOwnerEmail(docOwner.getEmail());
+        exchangeDocumentModel.setId(id);
+
+        return new ResponseEntity<>(exchangeDocumentModel, HttpStatus.OK);
+
     }
 
     @Override
@@ -63,21 +94,11 @@ public class DocumentAPIImpl implements DocumentAPI {
         logger.info("User: " + userModel.getId() + " sending usage for resource id: " + id + " with quota: " +
             exchangeDocumentUsageModel.getQuota());
 
-        DocumentModel documentModel = documentModelRepository.findOne(id);
-        if (documentModel == null || !exchangeDocumentUsageModel.isValid())
+        InboundDocumentModel inboundDocumentModel = documentModelRepository.findOne(id);
+        if (inboundDocumentModel == null || !exchangeDocumentUsageModel.isValid())
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
 
         List<InboundDocumentUsageModel> inboundDocumentUsageModels = documentUsageModelRepository.findByResId(id);
-        if (inboundDocumentUsageModels == null || inboundDocumentUsageModels.isEmpty()) {
-            InboundDocumentUsageModel documentUsageModel = new InboundDocumentUsageModel();
-            documentUsageModel.setResId(id);
-            documentUsageModel.setUserId(userModel.getId());
-            documentUsageModel.setTimeQuota(exchangeDocumentUsageModel.getQuota());
-            documentUsageModel.setAuthorId(documentModel.getOwnerId());
-
-            documentUsageModelRepository.save(documentUsageModel);
-            return new ResponseEntity<>(HttpStatus.OK);
-        }
 
         // FIXME: Use a proper mongo driver and do a proper query.
         for (InboundDocumentUsageModel doc : inboundDocumentUsageModels) {
@@ -89,12 +110,20 @@ public class DocumentAPIImpl implements DocumentAPI {
             }
         }
 
-        return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        // There is no such resource, we will create one.
+        InboundDocumentUsageModel documentUsageModel = new InboundDocumentUsageModel();
+        documentUsageModel.setResId(id);
+        documentUsageModel.setUserId(userModel.getId());
+        documentUsageModel.setTimeQuota(exchangeDocumentUsageModel.getQuota());
+        documentUsageModel.setAuthorId(inboundDocumentModel.getOwnerId());
+
+        documentUsageModelRepository.save(documentUsageModel);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @Override
     @RequestMapping(value = "/usage", method = RequestMethod.GET)
-    public ResponseEntity<List<InboundDocumentUsageModel>> getUsageForResources(
+    public ResponseEntity<List<ExchangeDocumentUsageModel>> getUsageForResources(
         @RequestHeader("Authorization") String auth) {
 
         InboundUserModel userModel = userRepository.getUserFromToken(auth);
@@ -106,6 +135,24 @@ public class DocumentAPIImpl implements DocumentAPI {
         List<InboundDocumentUsageModel> documentUsageModels =
             documentUsageModelRepository.findByAuthorId(userModel.getId());
 
-        return new ResponseEntity<>(documentUsageModels, HttpStatus.OK);
+
+        List<ExchangeDocumentUsageModel> outboundUsageModels = new ArrayList<>();
+        // This is really heavy, a cache should be in place.
+        for (InboundDocumentUsageModel document : documentUsageModels) {
+            ExchangeDocumentUsageModel exchangeDocumentUsageModel = new ExchangeDocumentUsageModel();
+            exchangeDocumentUsageModel.setQuota(document.getTimeQuota());
+
+            InboundUserModel user = userRepository.findOne(document.getUserId());
+            InboundDocumentModel doc = documentModelRepository.findOne(document.getResId());
+
+            exchangeDocumentUsageModel.setAuthorEmail(userModel.getEmail());
+            exchangeDocumentUsageModel.setUserEmail(user.getEmail());
+            exchangeDocumentUsageModel.setUrl(doc.getUrl());
+            exchangeDocumentUsageModel.setDocId(doc.getId());
+
+            outboundUsageModels.add(exchangeDocumentUsageModel);
+        }
+
+        return new ResponseEntity<>(outboundUsageModels, HttpStatus.OK);
     }
 }

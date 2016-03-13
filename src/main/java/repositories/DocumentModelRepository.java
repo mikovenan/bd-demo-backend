@@ -1,8 +1,8 @@
 package repositories;
 
-import models.DocumentModel;
+import models.InboundDocumentModel;
 import org.springframework.data.mongodb.repository.MongoRepository;
 
-public interface DocumentModelRepository extends MongoRepository<DocumentModel, String> {
+public interface DocumentModelRepository extends MongoRepository<InboundDocumentModel, String> {
 
 }

@@ -2,7 +2,7 @@ package models;
 
 import org.springframework.data.annotation.Id;
 
-public class DocumentModel implements ExchangeModel {
+public class InboundDocumentModel {
 
     @Id
     private String id;
@@ -11,9 +11,9 @@ public class DocumentModel implements ExchangeModel {
 
     private String ownerId;
 
-    public DocumentModel() {}
+    public InboundDocumentModel() {}
 
-    public DocumentModel(String url) {
+    public InboundDocumentModel(String url) {
         this.url = url;
     }
 
@@ -43,12 +43,6 @@ public class DocumentModel implements ExchangeModel {
 
     @Override
     public String toString() {
-        return String.format("DocumentModel: id: %s url: %s ownerId: %s", id, url, ownerId);
-    }
-
-    @Override
-    public boolean isValid() {
-        // Ideally we should also check if URL is valid but that's a bit overkill for a saturday night.
-        return url != null && url.length() > 0;
+        return String.format("InboundDocumentModel: id: %s url: %s ownerId: %s", id, url, ownerId);
     }
 }
